@@ -1,12 +1,13 @@
 //CONFIGURATION:
-var cookie = '';
+var cookie = '',
+    room = 'coding-soundtrack';
 
 //grab the important libraries that we'll need
 var http = require('http'),
-    io = require('socket.io-client'),
+	SockJS = require('./sockjs-client.js'),
 	repl = require('repl'),
 	r = null;
-
+	
 //Override the built in http class to always send our cookie, regardless of
 //where we'll be sending to. Sure, this violates spec, but in my defense we
 //didn't really have a better alternative.
@@ -21,105 +22,96 @@ http.OutgoingMessage.prototype._renderHeaders = function() {
 	return this.__renderHeaders();
 }
 
-function postHelper(host, path, json, callback) {
-	var post_options = {
-		host: host,
-		port: '80',
-		path: path,
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			'Content-Length': json.length,
-			'Cookie': cookie
-		}};
-
-	// Set up the request
-	var post_req = http.request(post_options, function(res) {
-		res.setEncoding('utf8');
-		var chunks = [];
-		res.on('data', function (chunk) {
-			chunks.push(chunk);
-		});
-
-		res.on('end', function(){
-			callback ? callback(chunks.join('')) : null;
-		});
-	});
-
-  // post the data
-  post_req.write(json);
-  post_req.end();
+function decodeHtml(str) {
+	return str.replace(/&#\d+?;/g, function(m){ var c = parseInt(m.substr(2, m.length-3), 10); return String.fromCharCode(c);});
 }
-  
+
 //web socket event handlers
 var handlers = {
 	'chat': function(data){
 		if (!r || !r.context.mute)
 		{
-			console.log('<' + data.from + '> ' + data.message);
+			console.log('<' + data.from + '> ' + decodeHtml(data.message));
+		}
+		
+		switch (data.message)
+		{
+			case 'herp':
+				client.send({type: 'chat', msg: 'derp'});
+				break;
+			case '/about':
+				client.send({type: 'chat', msg: 'https://github.com/pantlesswonder/robojardeuce'});
+				break;
 		}
 	},
-	'userLeave': function(data){
-		console.log(data.username + ' left.');
-	},
 	'userJoin': function(data){
-		console.log(data.user.username + ' joined.');
+		console.log(data.username + ' joined.');
 	},
 	'ping': function(data){
 		console.log('Responding to ping!');
-		postHelper('www.plug.dj', '/gateway/channel.pong', '{"service":"channel.pong","body":[]}', function(data){
-			console.log('pong response: ', data);
-		});
+		client.send({
+			type: 'rpc', id: 2,
+			name: 'user.pong', args: []});
 	},
-	'voteUpdate': function(){}
+	'djAdvance': function(data){
+		console.log('Song: ' + data.media.title + ' - ' + data.media.author);
+	},
+	'followjoin': function(){},
+	'curateUpdate': function(){},
+	'voteUpdate': function(){},
+	'userUpdate': function(){},
+	'unknown': function(type, data){
+		console.log('Unknown message: ', type, data);
+	}
 };
 
-//connect and listen for the various important events
-var sock = io.connect('s.plug.dj:843');
-sock.on('connecting', function (transport_type) {
-	console.log('connecting via ' + transport_type);
+var client = SockJS.create('http://sjs.plug.dj:443/plug');
+client.send = function(data){
+	client.write(JSON.stringify(data));
+};
+
+client.on('connection', function () {
+	console.log('socket connected');
+	client.send({
+		type: 'rpc', id: 1,
+		name: 'room.join', args: [room]});
 });
-sock.on('connect', function(realsocket){
-	sock.emit('join', 'coding-soundtrack');
-	sock.emit('set language', 'en');
-	console.log('Connected!!!');
-	
-	postHelper('www.plug.dj', '/gateway/room.join', '{"service":"room.join","body":["coding-soundtrack"]}', function(data){
-		console.log('room-join got: ' + data.length + 'b back');
-	});
-	
-	r = repl.start("node> ");
-	r.context.socket = sock;
-	r.context.handlers = handlers;
-	r.context.mute = false;
-});
-sock.on('connect_failed', function () {
-	console.log('connect failed ...');
-});
-sock.on('error', function (e) {
-	console.log('socket error...');
-	console.error(e ? e : 'A unknown error occurred');
-});
-sock.on('disconnect', function () {
-	console.log('DISCONNECTED');
-});
-sock.on('message', function (msg) {
-	for (var i=0; i<msg.messages.length; i++)
+
+client.on('data', function (msg) { 
+	var mo = JSON.parse(msg);
+	if (mo.messages && mo.messages.length)
 	{
-		//the msg has our room name in it, maybe we should
-		//filter out ones that aren't for our room?
-		
-		//go through all of the messages in this broadcast
-		//and send them to the handlers or log that we don't
-		//support that particular event
-		var event = msg.messages[i];
-		if (handlers[event.type])
+		for (var i=0; i<mo.messages.length; i++)
 		{
-			handlers[event.type](event.data);
-		}
-		else
-		{
-			console.log('Unsupported event: ' + event.type, event.data);
+			var msg = mo.messages[i];
+			
+			if (handlers[msg.type])
+			{
+				handlers[msg.type](msg.data);
+			}
+			else
+			{
+				handlers['unknown'](msg.type, msg.data);
+			}
 		}
 	}
+	else if ('rpc' === mo.type)
+	{
+		//TODO handle RPC return values
+		console.log('WARNING: Ignoring RPC response');
+	}
+	else
+	{
+		console.log(mo);
+	}
+	
 });
+
+client.on('error', function(e){
+	console.log('error');
+	console.log(e);
+});
+
+r = repl.start("node> ");
+r.context.client = client;
+r.context.handlers = handlers;
