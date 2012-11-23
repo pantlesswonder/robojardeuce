@@ -284,7 +284,7 @@
                     this.close();
                     break;
                 default:
-                    this.error(sm, "Unexpected frame type", type, chunk);
+					console.log("Honey badger don't care about invalid frame: " + chunk);
                 }
             } else {
                 this.partialChunk = chunk;
