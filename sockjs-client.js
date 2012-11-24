@@ -284,7 +284,8 @@
                     this.close();
                     break;
                 default:
-					console.log("Honey badger don't care about invalid frame: " + chunk);
+					this.error();
+					break;
                 }
             } else {
                 this.partialChunk = chunk;
