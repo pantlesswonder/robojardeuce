@@ -284,7 +284,7 @@
                     this.close();
                     break;
                 default:
-					this.error();
+					this.error(sm, "Unexpected frame type", type, chunk);
 					break;
                 }
             } else {
